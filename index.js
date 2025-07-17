@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, Routes, REST, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, REST, Routes, EmbedBuilder } from 'discord.js';
 import pg from 'pg';
 import dotenv from 'dotenv';
 
@@ -10,7 +10,7 @@ const {
   GUILD_ID,
   BIRTHDAY_ROLE_ID,
   BIRTHDAY_CHANNEL_ID,
-  DATABASE_URL
+  DATABASE_URL,
 } = process.env;
 
 const client = new Client({
@@ -23,31 +23,33 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-const pgClient = new pg.Client({
+const pool = new pg.Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-await pgClient.connect();
+async function setupDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS birthdays (
+      user_id VARCHAR PRIMARY KEY,
+      birthday DATE NOT NULL
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reactroles (
+      message_id VARCHAR PRIMARY KEY,
+      role_id VARCHAR NOT NULL,
+      emoji VARCHAR NOT NULL
+    );
+  `);
+}
 
-// Create tables if not exist
-await pgClient.query(`
-  CREATE TABLE IF NOT EXISTS birthdays (
-    user_id VARCHAR PRIMARY KEY,
-    birthday DATE NOT NULL
-  );
-`);
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
 
-await pgClient.query(`
-  CREATE TABLE IF NOT EXISTS reactroles (
-    message_id VARCHAR PRIMARY KEY,
-    emoji VARCHAR NOT NULL,
-    role_id VARCHAR NOT NULL
-  );
-`);
+  await setupDatabase();
 
-async function registerCommands() {
+  // Register slash commands
   const commands = [
     {
       name: 'setbirthday',
@@ -55,14 +57,14 @@ async function registerCommands() {
       options: [
         {
           name: 'user',
-          type: 6, // USER
           description: 'User to set birthday for',
+          type: 6, // USER
           required: true,
         },
         {
           name: 'date',
-          type: 3, // STRING
           description: 'Birthday in YYYY-MM-DD format',
+          type: 3, // STRING
           required: true,
         },
       ],
@@ -73,8 +75,8 @@ async function registerCommands() {
       options: [
         {
           name: 'user',
-          type: 6, // USER
           description: 'Only delete messages from this user',
+          type: 6, // USER
           required: false,
         },
       ],
@@ -85,169 +87,138 @@ async function registerCommands() {
       options: [
         {
           name: 'emoji',
-          type: 3, // STRING
           description: 'Emoji for reaction',
+          type: 3, // STRING
           required: true,
         },
         {
           name: 'roleid',
-          type: 3, // STRING
           description: 'Role ID to give',
+          type: 3, // STRING
+          required: true,
+        },
+        {
+          name: 'channelid',
+          description: 'Channel to send embed to',
+          type: 7, // CHANNEL
           required: true,
         },
         {
           name: 'text',
-          type: 3, // STRING
           description: 'Optional message text',
+          type: 3, // STRING
           required: false,
-        },
-        {
-          name: 'channelid',
-          type: 7, // CHANNEL
-          description: 'Channel to send embed to',
-          required: true,
         },
       ],
     },
   ];
+
+  const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
   try {
     await rest.put(
       Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
       { body: commands }
     );
-    console.log('Commands registered');
+    console.log('Slash commands registered.');
   } catch (error) {
-    console.error(error);
+    console.error('Error registering commands:', error);
   }
-}
-
-registerCommands();
-
-client.on('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-
-  // Birthday checker every hour
-  setInterval(checkBirthdays, 60 * 60 * 1000);
-  checkBirthdays();
 });
 
-async function checkBirthdays() {
-  try {
-    const today = new Date();
-    const month = String(today.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(today.getUTCDate()).padStart(2, '0');
-
-    const res = await pgClient.query(
-      `SELECT user_id FROM birthdays WHERE to_char(birthday, 'MM-DD') = $1`,
-      [`${month}-${day}`]
-    );
-
-    if (res.rows.length === 0) return;
-
-    const channel = await client.channels.fetch(BIRTHDAY_CHANNEL_ID);
-    if (!channel) return;
-
-    for (const row of res.rows) {
-      const member = await channel.guild.members.fetch(row.user_id).catch(() => null);
-      if (!member) continue;
-      channel.send(`Happy birthday ${member}!`);
-    }
-  } catch {
-    // Silent fail
-  }
-}
-
-client.on('interactionCreate', async interaction => {
+client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
 
-  const member = interaction.member;
-  const hasRole = member.roles.cache.has(BIRTHDAY_ROLE_ID);
+  if (!interaction.member.roles.cache.has(BIRTHDAY_ROLE_ID)) {
+    await interaction.reply({ content: 'error', ephemeral: true });
+    return;
+  }
 
   if (interaction.commandName === 'setbirthday') {
-    if (!hasRole) return interaction.reply({ content: 'error', ephemeral: true });
-
     const user = interaction.options.getUser('user');
     const dateStr = interaction.options.getString('date');
 
+    // Validate date format YYYY-MM-DD
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      return interaction.reply({ content: 'error', ephemeral: true });
+      await interaction.reply({ content: 'error', ephemeral: true });
+      return;
     }
 
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
-      return interaction.reply({ content: 'error', ephemeral: true });
+    const birthday = new Date(dateStr);
+    if (isNaN(birthday.getTime())) {
+      await interaction.reply({ content: 'error', ephemeral: true });
+      return;
     }
 
     try {
-      await pgClient.query(
+      await pool.query(
         `INSERT INTO birthdays (user_id, birthday) VALUES ($1, $2)
          ON CONFLICT (user_id) DO UPDATE SET birthday = EXCLUDED.birthday`,
         [user.id, dateStr]
       );
-      await interaction.reply({ content: `Birthday set for ${user.tag} as ${dateStr}`, ephemeral: true });
+      await interaction.reply(`Birthday for ${user.tag} set to ${dateStr}`);
     } catch {
       await interaction.reply({ content: 'error', ephemeral: true });
     }
   }
 
   else if (interaction.commandName === 'clearmessages') {
-    if (!hasRole) return interaction.reply({ content: 'error', ephemeral: true });
-
-    const user = interaction.options.getUser('user');
+    const targetUser = interaction.options.getUser('user');
     const channel = interaction.channel;
 
     try {
-      if (user) {
-        // Delete messages only from user
-        let fetched;
-        do {
-          fetched = await channel.messages.fetch({ limit: 100 });
-          const userMessages = fetched.filter(m => m.author.id === user.id);
-          if (userMessages.size === 0) break;
-          await channel.bulkDelete(userMessages, true);
-        } while (fetched.size >= 2);
-      } else {
-        // Delete ALL messages in channel
-        let fetched;
-        do {
-          fetched = await channel.messages.fetch({ limit: 100 });
-          if (fetched.size === 0) break;
-          await channel.bulkDelete(fetched, true);
-        } while (fetched.size >= 2);
+      if (!channel || !channel.isTextBased()) {
+        await interaction.reply({ content: 'error', ephemeral: true });
+        return;
       }
-      await interaction.reply({ content: 'Messages deleted', ephemeral: true });
+
+      let deletedCount = 0;
+
+      if (targetUser) {
+        // Delete messages only from the target user
+        const fetched = await channel.messages.fetch({ limit: 100 });
+        const messagesToDelete = fetched.filter(msg => msg.author.id === targetUser.id);
+        await channel.bulkDelete(messagesToDelete, true);
+        deletedCount = messagesToDelete.size;
+      } else {
+        // Delete ALL messages in channel (Discord limits to last 100)
+        const fetched = await channel.messages.fetch({ limit: 100 });
+        await channel.bulkDelete(fetched, true);
+        deletedCount = fetched.size;
+      }
+
+      await interaction.reply(`Deleted ${deletedCount} messages.`);
     } catch {
       await interaction.reply({ content: 'error', ephemeral: true });
     }
   }
 
   else if (interaction.commandName === 'createreactrole') {
-    if (!hasRole) return interaction.reply({ content: 'error', ephemeral: true });
-
     const emoji = interaction.options.getString('emoji');
     const roleId = interaction.options.getString('roleid');
-    const text = interaction.options.getString('text') || 'React to get the role!';
     const channel = interaction.options.getChannel('channelid');
+    const text = interaction.options.getString('text') || 'React to get the role!';
 
-    if (!channel.isTextBased()) return interaction.reply({ content: 'error', ephemeral: true });
+    if (!channel || !channel.isTextBased()) {
+      await interaction.reply({ content: 'error', ephemeral: true });
+      return;
+    }
 
     try {
       const embed = new EmbedBuilder()
         .setTitle('Reaction Role')
         .setDescription(text)
-        .setColor('Blue');
+        .setColor(0x00AE86);
 
-      const msg = await channel.send({ embeds: [embed] });
-      await msg.react(emoji);
+      const message = await channel.send({ embeds: [embed] });
+      await message.react(emoji);
 
-      await pgClient.query(
-        `INSERT INTO reactroles (message_id, emoji, role_id) VALUES ($1, $2, $3)
-         ON CONFLICT (message_id) DO UPDATE SET emoji = EXCLUDED.emoji, role_id = EXCLUDED.role_id`,
-        [msg.id, emoji, roleId]
+      await pool.query(
+        `INSERT INTO reactroles (message_id, role_id, emoji) VALUES ($1, $2, $3)`,
+        [message.id, roleId, emoji]
       );
 
-      await interaction.reply({ content: 'Reaction role message created.', ephemeral: true });
+      await interaction.reply({ content: `Reaction role message created in ${channel}`, ephemeral: true });
     } catch {
       await interaction.reply({ content: 'error', ephemeral: true });
     }
@@ -263,22 +234,21 @@ client.on('messageReactionAdd', async (reaction, user) => {
       return;
     }
   }
-  const { message, emoji } = reaction;
 
+  const { message, emoji } = reaction;
   try {
-    const res = await pgClient.query(
+    const res = await pool.query(
       `SELECT role_id FROM reactroles WHERE message_id = $1 AND emoji = $2`,
       [message.id, emoji.identifier]
     );
-    if (res.rows.length === 0) return;
+
+    if (res.rowCount === 0) return;
 
     const roleId = res.rows[0].role_id;
-    const member = await message.guild.members.fetch(user.id).catch(() => null);
-    if (!member) return;
-
-    await member.roles.add(roleId).catch(() => {});
+    const guildMember = await message.guild.members.fetch(user.id);
+    await guildMember.roles.add(roleId);
   } catch {
-    // Silent fail
+    // silently fail
   }
 });
 
@@ -291,22 +261,44 @@ client.on('messageReactionRemove', async (reaction, user) => {
       return;
     }
   }
-  const { message, emoji } = reaction;
 
+  const { message, emoji } = reaction;
   try {
-    const res = await pgClient.query(
+    const res = await pool.query(
       `SELECT role_id FROM reactroles WHERE message_id = $1 AND emoji = $2`,
       [message.id, emoji.identifier]
     );
-    if (res.rows.length === 0) return;
+
+    if (res.rowCount === 0) return;
 
     const roleId = res.rows[0].role_id;
-    const member = await message.guild.members.fetch(user.id).catch(() => null);
-    if (!member) return;
-
-    await member.roles.remove(roleId).catch(() => {});
+    const guildMember = await message.guild.members.fetch(user.id);
+    await guildMember.roles.remove(roleId);
   } catch {
-    // Silent fail
+    // silently fail
+  }
+});
+
+// Birthday check every day at 00:00 UTC
+import cron from 'node-cron';
+
+cron.schedule('0 0 * * *', async () => {
+  try {
+    const today = new Date().toISOString().slice(5, 10); // MM-DD
+    const res = await pool.query(`SELECT user_id FROM birthdays WHERE TO_CHAR(birthday, 'MM-DD') = $1`, [today]);
+    if (res.rowCount === 0) return;
+
+    const channel = await client.channels.fetch(BIRTHDAY_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+
+    for (const row of res.rows) {
+      const user = await client.users.fetch(row.user_id);
+      if (user) {
+        channel.send(`Happy birthday ${user}! 🎉`);
+      }
+    }
+  } catch {
+    // ignore errors
   }
 });
 
