@@ -74,7 +74,7 @@ const modifyRoleCommand = new SlashCommandBuilder()
   )
   .addStringOption(option =>
     option.setName('userid')
-      .setDescription('Target User ID')
+      .setDescription('User ID')
       .setRequired(true)
   )
   .addStringOption(option =>
