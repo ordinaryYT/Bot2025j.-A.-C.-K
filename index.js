@@ -66,7 +66,7 @@ const clearChannelCommand = new SlashCommandBuilder()
 
 const modifyRoleCommand = new SlashCommandBuilder()
   .setName('add/remove role')
-  .setDescription('Add or remove a role from a user by ID')
+  .setDescription('Add or remove a role ')
   .addStringOption(option =>
     option.setName('action')
       .setDescription('add/remove')
