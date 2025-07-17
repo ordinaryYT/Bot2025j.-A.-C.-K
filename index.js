@@ -52,7 +52,7 @@ const commands = [
     .setDescription('Clear messages in this channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder()
-    .setName('modifyrole')
+    .setName('add/remove role')
     .setDescription('Add or remove a role')
     .addStringOption(option =>
       option.setName('action')
@@ -206,7 +206,7 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.GuildMemberAdd, async member => {
   const channel = await client.channels.fetch(process.env.WELCOME_CHANNEL_ID);
   if (channel && channel.isTextBased()) {
-    channel.send(`Welcome to the server, <@${member.id}>! 🎉`);
+    channel.send(`Welcome to the server, <@${member.id}>! `);
   }
 });
 
