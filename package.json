@@ -1,14 +1,15 @@
 {
   "name": "discord-birthday-bot",
   "version": "1.0.0",
+  "description": "Birthday Discord bot with RenderSQL and clear messages",
+  "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.0",
-    "pg": "^8.11.0",
-    "dotenv": "^16.3.1",
-    "node-cron": "^3.0.2"
+    "discord.js": "^14.11.0",
+    "rendersql": "^1.0.2",
+    "dotenv": "^16.3.1"
   }
 }
