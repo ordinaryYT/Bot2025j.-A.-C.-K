@@ -69,7 +69,7 @@ client.on('interactionCreate', async interaction => {
 
     if (!member.roles.cache.has(requiredRoleId)) {
       return interaction.reply({
-        content: 'You do not have permission to use this command.',
+        content: 'You do not have permission.',
         ephemeral: true
       });
     }
@@ -93,7 +93,7 @@ client.on('interactionCreate', async interaction => {
     } catch (err) {
       console.error("Error saving birthday:", err);
       await interaction.reply({
-        content: 'An error occurred while saving your birthday.',
+        content: 'error saving birthday.',
         ephemeral: true
       });
     }
@@ -114,7 +114,7 @@ const checkBirthdays = async () => {
 
     const channel = await client.channels.fetch(process.env.BIRTHDAY_CHANNEL_ID);
     if (!channel || !channel.isTextBased()) {
-      console.error('Birthday channel not found or not text-based.');
+      console.error('Birthday channel not found .');
       return;
     }
 
