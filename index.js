@@ -1,122 +1,149 @@
-import { Client, GatewayIntentBits } from 'discord.js';
-import RenderSQL from 'rendersql';
-import dotenv from 'dotenv';
+require('dotenv').config();
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const express = require('express');
+const { Pool } = require('pg');
 
-dotenv.config();
+// --- Express keep-alive server for Render ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (_, res) => res.send('Bot is running.'));
+app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
 
-const TOKEN = process.env.TOKEN;
-const BIRTHDAY_ROLE_ID = process.env.BIRTHDAY_ROLE_ID;
-
-const db = new RenderSQL(process.env.RENDER_SQL_DB_URL);
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+// --- PostgreSQL (RenderSQL) ---
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // Required for Render
 });
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
+// Create birthdays table if it doesn't exist
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS birthdays (
+        user_id TEXT PRIMARY KEY,
+        birthday DATE NOT NULL
+      );
+    `);
+    console.log("Database initialized.");
+  } catch (err) {
+    console.error("Error initializing database:", err);
+  }
+})();
 
-async function setBirthday(userId, birthday) {
-  await db.set(`birthday_${userId}`, birthday);
-}
+// --- Discord Bot Client ---
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-async function getBirthday(userId) {
-  return await db.get(`birthday_${userId}`);
-}
+// --- Slash Command: /setbirthday ---
+const commands = [
+  new SlashCommandBuilder()
+    .setName('setbirthday')
+    .setDescription('Set a user\'s birthday')
+    .addStringOption(option =>
+      option.setName('date')
+        .setDescription('Your birthday (YYYY-MM-DD)')
+        .setRequired(true)
+    )
+].map(cmd => cmd.toJSON());
 
-async function registerCommands() {
-  const commands = [
-    {
-      name: 'setbirthday',
-      description: 'Set your birthday (YYYY-MM-DD)',
-      options: [
-        {
-          name: 'date',
-          type: 3, // STRING
-          description: 'Your birthday in YYYY-MM-DD',
-          required: true,
-        },
-      ],
-    },
-    {
-      name: 'clearmessages',
-      description: 'Delete messages in this channel',
-      options: [
-        {
-          name: 'count',
-          type: 4, // INTEGER
-          description: 'Number of messages to delete',
-          required: true,
-        },
-        {
-          name: 'user',
-          type: 6, // USER
-          description: 'Only delete messages from this user',
-          required: false,
-        },
-      ],
-    },
-  ];
+// Register slash command
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+(async () => {
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+      { body: commands }
+    );
+    console.log("Slash commands registered.");
+  } catch (err) {
+    console.error("Failed to register commands:", err);
+  }
+})();
 
-  await client.application.commands.set(commands);
-}
-
-client.on('interactionCreate', async (interaction) => {
+// --- Slash Command Logic ---
+client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  try {
-    if (!interaction.member.roles.cache.has(BIRTHDAY_ROLE_ID)) {
-      await interaction.reply({ content: 'error', ephemeral: true });
-      return;
+  if (interaction.commandName === 'setbirthday') {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const requiredRoleId = process.env.BIRTHDAY_ROLE_ID;
+
+    if (!member.roles.cache.has(requiredRoleId)) {
+      return interaction.reply({
+        content: 'You do not have permission to use this command.',
+        ephemeral: true
+      });
     }
 
-    if (interaction.commandName === 'setbirthday') {
-      const dateStr = interaction.options.getString('date');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        await interaction.reply({ content: 'error', ephemeral: true });
-        return;
-      }
-
-      await setBirthday(interaction.user.id, dateStr);
-      await interaction.reply({ content: `Birthday set to ${dateStr}`, ephemeral: true });
-    } else if (interaction.commandName === 'clearmessages') {
-      const count = interaction.options.getInteger('count');
-      const user = interaction.options.getUser('user');
-
-      if (count <= 0) {
-        await interaction.reply({ content: 'error', ephemeral: true });
-        return;
-      }
-
-      const fetched = await interaction.channel.messages.fetch({ limit: count });
-      const messagesToDelete = user
-        ? fetched.filter(msg => msg.author.id === user.id)
-        : fetched;
-
-      // Bulk delete in chunks of 100
-      const batches = [];
-      for (let i = 0; i < messagesToDelete.size; i += 100) {
-        batches.push(messagesToDelete.slice(i, i + 100));
-      }
-
-      for (const batch of batches) {
-        await interaction.channel.bulkDelete(batch, true).catch(() => {});
-      }
-
-      await interaction.reply({ content: `Deleted ${messagesToDelete.size} messages.`, ephemeral: true });
+    const dateInput = interaction.options.getString('date');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+      return interaction.reply({
+        content: 'Invalid date format. Please use YYYY-MM-DD.',
+        ephemeral: true
+      });
     }
-  } catch {
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'error', ephemeral: true });
+
+    try {
+      await pool.query(
+        `INSERT INTO birthdays (user_id, birthday)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET birthday = EXCLUDED.birthday`,
+        [interaction.user.id, dateInput]
+      );
+      await interaction.reply(`Birthday saved: ${dateInput}`);
+    } catch (err) {
+      console.error("Error saving birthday:", err);
+      await interaction.reply({
+        content: 'An error occurred while saving your birthday.',
+        ephemeral: true
+      });
     }
   }
 });
 
-registerCommands();
+// --- Birthday Checker ---
+const checkBirthdays = async () => {
+  const today = new Date().toISOString().slice(5, 10); // MM-DD
 
-client.login(TOKEN);
+  try {
+    const res = await pool.query(`
+      SELECT user_id FROM birthdays
+      WHERE TO_CHAR(birthday, 'MM-DD') = $1
+    `, [today]);
+
+    if (res.rows.length === 0) return;
+
+    const channel = await client.channels.fetch(process.env.BIRTHDAY_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) {
+      console.error('Birthday channel not found or not text-based.');
+      return;
+    }
+
+    for (const row of res.rows) {
+      const mention = `<@${row.user_id}>`;
+      channel.send(`Happy birthday ${mention}!`);
+    }
+  } catch (err) {
+    console.error('Error checking birthdays:', err);
+  }
+};
+
+// --- Schedule Birthday Check ---
+client.on('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  checkBirthdays();
+
+  const now = new Date();
+  const millisUntilMidnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1
+  ).getTime() - now.getTime();
+
+  setTimeout(() => {
+    checkBirthdays(); // Run first time at midnight
+    setInterval(checkBirthdays, 24 * 60 * 60 * 1000); // Every 24 hours
+  }, millisUntilMidnight);
+});
+
+// --- Start Bot ---
+client.login(process.env.DISCORD_TOKEN);
