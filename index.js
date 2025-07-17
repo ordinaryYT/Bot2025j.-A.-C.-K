@@ -68,8 +68,8 @@ const commands = [
       opt.setName('roleid').setDescription('Role ID to give').setRequired(true))
     .addStringOption(opt =>
       opt.setName('text').setDescription('Optional message text').setRequired(false))
-    .addStringOption(opt =>
-      opt.setName('channelid').setDescription('Channel ID to send embed to').setRequired(true))
+    .addChannelOption(opt =>
+      opt.setName('channelid').setDescription('Channel to send embed to').setRequired(true))
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -165,13 +165,12 @@ client.on('interactionCreate', async interaction => {
             deleted++;
             remaining--;
             lastId = msg.id;
-            // Discord rate limit safety delay:
+            // Rate limit safety delay
             await new Promise(r => setTimeout(r, 1100));
           } catch {}
         }
 
         if (filtered.size < messages.size) {
-          // Some messages filtered out; continue fetching older messages
           lastId = messages.last().id;
         }
       }
@@ -186,10 +185,9 @@ client.on('interactionCreate', async interaction => {
     const emoji = interaction.options.getString('emoji');
     const roleId = interaction.options.getString('roleid');
     const text = interaction.options.getString('text') || 'React to get the role!';
-    const channelId = interaction.options.getString('channelid');
+    const channel = interaction.options.getChannel('channelid');
 
-    const targetChannel = await client.channels.fetch(channelId).catch(() => null);
-    if (!targetChannel || !targetChannel.isTextBased()) {
+    if (!channel || !channel.isTextBased()) {
       return interaction.reply({ content: 'error', ephemeral: true });
     }
 
@@ -199,7 +197,7 @@ client.on('interactionCreate', async interaction => {
         .setDescription(text)
         .setColor('#00AAFF');
 
-      const msg = await targetChannel.send({ embeds: [embed] });
+      const msg = await channel.send({ embeds: [embed] });
       await msg.react(emoji);
 
       // Save to DB
@@ -230,7 +228,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
   const roleData = reactionRoles.get(reaction.message.id);
   if (!roleData) return;
 
-  // Check emoji by name or identifier (for custom emojis)
   if (reaction.emoji.name !== roleData.emoji && reaction.emoji.identifier !== roleData.emoji) return;
 
   const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
