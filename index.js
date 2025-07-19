@@ -68,22 +68,35 @@ const commands = [
     .addStringOption(option =>
       option.setName('roleid').setDescription('Role ID').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  (() => {
-    const builder = new SlashCommandBuilder()
-      .setName('reactionrole')
-      .setDescription('set a role with reaction')
-      .addStringOption(option =>
-        option.setName('message').setDescription('The message to display').setRequired(true));
-
-    for (let i = 1; i <= 20; i++) {
-      builder.addStringOption(option =>
-        option.setName(`emoji${i}`).setDescription(`Emoji ${i}`).setRequired(i === 1));
-      builder.addStringOption(option =>
-        option.setName(`role${i}`).setDescription(`Role ID for emoji ${i}`).setRequired(i === 1));
-    }
-
-    return builder;
-  })()
+  new SlashCommandBuilder()
+    .setName('reactionrole')
+    .setDescription('set a role with reaction')
+    .addStringOption(option => option.setName('message').setDescription('The message to display').setRequired(true))
+    .addStringOption(option => option.setName('emoji1').setDescription('Emoji 1').setRequired(true))
+    .addStringOption(option => option.setName('role1').setDescription('Role ID for emoji 1').setRequired(true))
+    .addStringOption(option => option.setName('emoji2').setDescription('Emoji 2').setRequired(false))
+    .addStringOption(option => option.setName('role2').setDescription('Role ID for emoji 2').setRequired(false))
+    .addStringOption(option => option.setName('emoji3').setDescription('Emoji 3').setRequired(false))
+    .addStringOption(option => option.setName('role3').setDescription('Role ID for emoji 3').setRequired(false))
+    .addStringOption(option => option.setName('emoji4').setDescription('Emoji 4').setRequired(false))
+    .addStringOption(option => option.setName('role4').setDescription('Role ID for emoji 4').setRequired(false))
+    .addStringOption(option => option.setName('emoji5').setDescription('Emoji 5').setRequired(false))
+    .addStringOption(option => option.setName('role5').setDescription('Role ID for emoji 5').setRequired(false))
+    .addStringOption(option => option.setName('emoji6').setDescription('Emoji 6').setRequired(false))
+    .addStringOption(option => option.setName('role6').setDescription('Role ID for emoji 6').setRequired(false))
+    .addStringOption(option => option.setName('emoji7').setDescription('Emoji 7').setRequired(false))
+    .addStringOption(option => option.setName('role7').setDescription('Role ID for emoji 7').setRequired(false))
+    .addStringOption(option => option.setName('emoji8').setDescription('Emoji 8').setRequired(false))
+    .addStringOption(option => option.setName('role8').setDescription('Role ID for emoji 8').setRequired(false))
+    .addStringOption(option => option.setName('emoji9').setDescription('Emoji 9').setRequired(false))
+    .addStringOption(option => option.setName('role9').setDescription('Role ID for emoji 9').setRequired(false))
+    .addStringOption(option => option.setName('emoji10').setDescription('Emoji 10').setRequired(false))
+    .addStringOption(option => option.setName('role10').setDescription('Role ID for emoji 10').setRequired(false))
+    .addStringOption(option => option.setName('emoji11').setDescription('Emoji 11').setRequired(false))
+    .addStringOption(option => option.setName('role11').setDescription('Role ID for emoji 11').setRequired(false))
+    .addStringOption(option => option.setName('emoji12').setDescription('Emoji 12').setRequired(false))
+    .addStringOption(option => option.setName('role12').setDescription('Role ID for emoji 12').setRequired(false))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -164,7 +177,7 @@ client.on('interactionCreate', async interaction => {
       const messageText = interaction.options.getString('message');
       const message = await interaction.channel.send(messageText);
 
-      for (let i = 1; i <= 20; i++) {
+      for (let i = 1; i <= 12; i++) {
         const emoji = interaction.options.getString(`emoji${i}`);
         const role = interaction.options.getString(`role${i}`);
 
@@ -177,7 +190,7 @@ client.on('interactionCreate', async interaction => {
               ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
             `, [message.id, emoji, role]);
           } catch (err) {
-            console.error(`Error applying emoji${i}:`, err);
+            console.error(`Failed to set emoji${i}:`, err);
           }
         }
       }
@@ -190,7 +203,6 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// --- Birthday Check ---
 const checkBirthdays = async () => {
   const today = new Date().toISOString().slice(5, 10);
   try {
@@ -206,14 +218,13 @@ const checkBirthdays = async () => {
 
     for (const row of res.rows) {
       const mention = `<@${row.user_id}>`;
-      channel.send(`Happy birthday ${mention}! `);
+      channel.send(`Happy birthday ${mention}!`);
     }
   } catch {
-    console.error('Error');
+    console.error('Error checking birthdays');
   }
 };
 
-// --- Reaction Roles ---
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
@@ -234,7 +245,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       console.log(`Role added to ${user.tag}`);
     }
   } catch (error) {
-    console.error('Error ', error);
+    console.error('Error adding role:', error);
   }
 });
 
@@ -262,15 +273,13 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
   }
 });
 
-// --- Welcome Message ---
 client.on(Events.GuildMemberAdd, async member => {
   const channel = await client.channels.fetch(process.env.WELCOME_CHANNEL_ID);
   if (channel && channel.isTextBased()) {
-    channel.send(`Welcome to the server, <@${member.id}>! `);
+    channel.send(`Welcome to the server, <@${member.id}>!`);
   }
 });
 
-// --- Bot Ready ---
 client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   checkBirthdays();
