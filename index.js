@@ -68,20 +68,22 @@ const commands = [
     .addStringOption(option =>
       option.setName('roleid').setDescription('Role ID').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder()
-    .setName('reactionrole')
-    .setDescription('set a role with reaction')
-    .addStringOption(option =>
-      option.setName('message').setDescription('The message to display').setRequired(true))
-    .addStringOption(option =>
-      option.setName('emoji1').setDescription('First emoji').setRequired(true))
-    .addStringOption(option =>
-      option.setName('role1').setDescription('Role ID for first emoji').setRequired(true))
-    .addStringOption(option =>
-      option.setName('emoji2').setDescription('Second emoji').setRequired(false))
-    .addStringOption(option =>
-      option.setName('role2').setDescription('Role ID for second emoji').setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  (() => {
+    const builder = new SlashCommandBuilder()
+      .setName('reactionrole')
+      .setDescription('set a role with reaction')
+      .addStringOption(option =>
+        option.setName('message').setDescription('The message to display').setRequired(true));
+
+    for (let i = 1; i <= 20; i++) {
+      builder.addStringOption(option =>
+        option.setName(`emoji${i}`).setDescription(`Emoji ${i}`).setRequired(i === 1));
+      builder.addStringOption(option =>
+        option.setName(`role${i}`).setDescription(`Role ID for emoji ${i}`).setRequired(i === 1));
+    }
+
+    return builder;
+  })()
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -97,7 +99,6 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   }
 })();
 
-// --- Slash Command Handler ---
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -133,7 +134,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  if (interaction.commandName === 'modifyrole') {
+  if (interaction.commandName === 'addorremoverole') {
     const action = interaction.options.getString('action');
     const userId = interaction.options.getString('userid');
     const roleId = interaction.options.getString('roleid');
@@ -154,47 +155,44 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  if (interaction.commandName === 'setupreactions') {
+  if (interaction.commandName === 'reactionrole') {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ content: 'You dont have permission', ephemeral: true });
+      return interaction.reply({ content: 'You don’t have permission.', ephemeral: true });
     }
 
     try {
       const messageText = interaction.options.getString('message');
-      const emoji1 = interaction.options.getString('emoji1');
-      const role1 = interaction.options.getString('role1');
-      const emoji2 = interaction.options.getString('emoji2');
-      const role2 = interaction.options.getString('role2');
-
       const message = await interaction.channel.send(messageText);
-      await message.react(emoji1);
-      if (emoji2 && role2) await message.react(emoji2);
 
-      await pool.query(`
-        INSERT INTO reaction_roles (message_id, emoji, role_id)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
-      `, [message.id, emoji1, role1]);
+      for (let i = 1; i <= 20; i++) {
+        const emoji = interaction.options.getString(`emoji${i}`);
+        const role = interaction.options.getString(`role${i}`);
 
-      if (emoji2 && role2) {
-        await pool.query(`
-          INSERT INTO reaction_roles (message_id, emoji, role_id)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
-        `, [message.id, emoji2, role2]);
+        if (emoji && role) {
+          try {
+            await message.react(emoji);
+            await pool.query(`
+              INSERT INTO reaction_roles (message_id, emoji, role_id)
+              VALUES ($1, $2, $3)
+              ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
+            `, [message.id, emoji, role]);
+          } catch (err) {
+            console.error(`Error applying emoji${i}:`, err);
+          }
+        }
       }
 
-      await interaction.reply({ content: 'created', ephemeral: true });
+      await interaction.reply({ content: 'Reaction role message created.', ephemeral: true });
     } catch (error) {
-      console.error(' error', error);
-      await interaction.reply({ content: 'error', ephemeral: true });
+      console.error('Error setting up reaction roles:', error);
+      await interaction.reply({ content: 'Error setting up reaction roles.', ephemeral: true });
     }
   }
 });
 
 // --- Birthday Check ---
 const checkBirthdays = async () => {
-  const today = new Date().toISOString().slice(5, 10); // MM-DD
+  const today = new Date().toISOString().slice(5, 10);
   try {
     const res = await pool.query(`
       SELECT user_id FROM birthdays
