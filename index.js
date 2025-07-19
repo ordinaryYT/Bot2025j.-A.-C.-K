@@ -16,12 +16,14 @@ const pool = new Pool({
 (async () => {
   try {
     await pool.query(`
+      DROP TABLE IF EXISTS reaction_roles;
+      
       CREATE TABLE IF NOT EXISTS birthdays (
         user_id TEXT PRIMARY KEY,
         birthday DATE NOT NULL
       );
       
-      CREATE TABLE IF NOT EXISTS reaction_roles (
+      CREATE TABLE reaction_roles (
         message_id TEXT,
         emoji TEXT,
         role_id TEXT,
@@ -118,7 +120,7 @@ client.on('interactionCreate', async interaction => {
   if (interaction.commandName === 'setbirthday') {
     const dateInput = interaction.options.getString('date');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
-      return interaction.reply({ content: 'Invalid date format. Use YYYY-MM-DD.', ephemeral: true });
+      return interaction.reply({ content: 'Invalid date format. Use YYYY-MM-DD.', flags: 64 });
     }
 
     try {
@@ -127,23 +129,23 @@ client.on('interactionCreate', async interaction => {
         VALUES ($1, $2)
         ON CONFLICT (user_id) DO UPDATE SET birthday = EXCLUDED.birthday
       `, [interaction.user.id, dateInput]);
-      await interaction.reply(`Birthday date saved as: ${dateInput}`);
+      await interaction.reply({ content: `Birthday date saved as: ${dateInput}`, flags: 64 });
     } catch {
-      await interaction.reply({ content: 'Error ', ephemeral: true });
+      await interaction.reply({ content: 'Error saving birthday.', flags: 64 });
     }
   }
 
   if (interaction.commandName === 'clearchannel') {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ content: 'You dont have permission.', ephemeral: true });
+      return interaction.reply({ content: 'You don’t have permission.', flags: 64 });
     }
 
     try {
       const messages = await interaction.channel.messages.fetch({ limit: 100 });
       await interaction.channel.bulkDelete(messages, true);
-      await interaction.reply({ content: 'Messages deleted.', ephemeral: true });
+      await interaction.reply({ content: 'Messages deleted.', flags: 64 });
     } catch {
-      await interaction.reply({ content: 'Error', ephemeral: true });
+      await interaction.reply({ content: 'Error clearing messages.', flags: 64 });
     }
   }
 
@@ -161,16 +163,16 @@ client.on('interactionCreate', async interaction => {
         await member.roles.remove(roleId);
         await interaction.reply(`Removed role from <@${userId}>`);
       } else {
-        await interaction.reply({ content: 'error', ephemeral: true });
+        await interaction.reply({ content: 'Invalid action.', flags: 64 });
       }
     } catch {
-      await interaction.reply({ content: 'Error', ephemeral: true });
+      await interaction.reply({ content: 'Error modifying role.', flags: 64 });
     }
   }
 
   if (interaction.commandName === 'reactionrole') {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ content: 'You don’t have permission.', ephemeral: true });
+      return interaction.reply({ content: 'You don’t have permission.', flags: 64 });
     }
 
     try {
@@ -182,48 +184,22 @@ client.on('interactionCreate', async interaction => {
         const role = interaction.options.getString(`role${i}`);
 
         if (emoji && role) {
-          try {
-            await message.react(emoji);
-            await pool.query(`
-              INSERT INTO reaction_roles (message_id, emoji, role_id)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
-            `, [message.id, emoji, role]);
-          } catch (err) {
-            console.error(`Failed to set emoji${i}:`, err);
-          }
+          await message.react(emoji);
+          await pool.query(`
+            INSERT INTO reaction_roles (message_id, emoji, role_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
+          `, [message.id, emoji, role]);
         }
       }
 
-      await interaction.reply({ content: 'Reaction role message created.', ephemeral: true });
+      await interaction.reply({ content: 'Reaction role message created.', flags: 64 });
     } catch (error) {
       console.error('Error setting up reaction roles:', error);
-      await interaction.reply({ content: 'Error setting up reaction roles.', ephemeral: true });
+      await interaction.reply({ content: 'Error setting up reaction roles.', flags: 64 });
     }
   }
 });
-
-const checkBirthdays = async () => {
-  const today = new Date().toISOString().slice(5, 10);
-  try {
-    const res = await pool.query(`
-      SELECT user_id FROM birthdays
-      WHERE TO_CHAR(birthday, 'MM-DD') = $1
-    `, [today]);
-
-    if (res.rows.length === 0) return;
-
-    const channel = await client.channels.fetch(process.env.BIRTHDAY_CHANNEL_ID);
-    if (!channel || !channel.isTextBased()) return;
-
-    for (const row of res.rows) {
-      const mention = `<@${row.user_id}>`;
-      channel.send(`Happy birthday ${mention}!`);
-    }
-  } catch {
-    console.error('Error checking birthdays');
-  }
-};
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
@@ -242,10 +218,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     if (res.rows.length > 0) {
       const member = await reaction.message.guild.members.fetch(user.id);
       await member.roles.add(res.rows[0].role_id);
-      console.log(`Role added to ${user.tag}`);
     }
   } catch (error) {
-    console.error('Error adding role:', error);
+    console.error('Error assigning role:', error);
   }
 });
 
@@ -266,7 +241,6 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
     if (res.rows.length > 0) {
       const member = await reaction.message.guild.members.fetch(user.id);
       await member.roles.remove(res.rows[0].role_id);
-      console.log(`Role removed from ${user.tag}`);
     }
   } catch (error) {
     console.error('Error removing role:', error);
@@ -282,14 +256,6 @@ client.on(Events.GuildMemberAdd, async member => {
 
 client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-  checkBirthdays();
-
-  const now = new Date();
-  const millisUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => {
-    checkBirthdays();
-    setInterval(checkBirthdays, 24 * 60 * 60 * 1000);
-  }, millisUntilMidnight);
 });
 
 client.login(process.env.DISCORD_TOKEN);
