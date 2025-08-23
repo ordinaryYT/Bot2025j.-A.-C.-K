@@ -174,7 +174,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({ content: 'You don’t have permission.', flags: 64 });
     }
-//test
+//test1
     try {
       const messageText = interaction.options.getString('message');
       const message = await interaction.channel.send(messageText);
